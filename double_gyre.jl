@@ -202,7 +202,7 @@ serialize("e0_coeffs.ser", e0_coeffs)
 serialize("em_coeffs.ser", em_coeffs)
 =#
 
-save("gyre_phaseplot.png", current_figure())
+save("gyre_phaseplot.png", current_figure(), px_per_unit=3.0)
 
 #                resonant modes
 # -------------------------------------------------
@@ -238,3 +238,5 @@ for k in CartesianIndices(mode)
 end
 
 contourf(x1s, x2s, real.(mode))
+
+save("gyre_resonance.png", current_figure(), px_per_unit=3.0)

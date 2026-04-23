@@ -25,7 +25,7 @@ end
 
 
 # vectorfield parameters we will search
-n_iterations = 200
+n_iterations = 20
 p_iterator = range(0.2f0, -0.2f0, length=n_iterations)
 
 # observable 
@@ -34,7 +34,7 @@ gσ(σ) = x -> g(x, σ)
 
 
 # how many trajectories per parameter
-n_trajectories = 40_000
+n_trajectories = 30_000
 plot_trajectories = false
 
 
@@ -44,11 +44,11 @@ weights = [wx*wy for wx in _weights, wy in _weights]
 
 
 # integration time 
-N = 250         # number of delays
+N = 300         # number of delays
 M = 1   # number of time steps
 
-dt = 0.5f0     # time step
-delay = 60dt
+dt = π/6f0     # time step
+delay = 100dt
 offset = Int32(delay ÷ dt)
 tspan = (0, M*dt + (N+1)*delay)
 integration_time = 0:dt:M*dt
@@ -60,7 +60,7 @@ autocorrelation = zeros(Float32, N)
 second_order_kernel(x) = (1 + cos(π*x)) / 2
 fourth_order_kernel(x) = 1 - x^4 * (-20abs(x)^3 + 70x^2 - 84abs(x) + 35)
 N_smoothing = N
-residue_tolerance = 1e-9
+residue_tolerance = 1e-5
 
 
 #iteration = 40
@@ -138,15 +138,15 @@ for iteration in 1:n_iterations
         ms = scatter!(
             ax, poles_r, 
             markersize=10, 
-            color=pseudolog10.(abs.(residues_r)), 
+            color=abs.(residues_r), 
             strokewidth=3, 
             marker=:circle, 
             #colorscale=pseudolog10, 
-            colorrange=(-0.05, 0.351)
+            #colorrange=(-0.05, 0.351)
         )
         limits!(ax, -1.1, 1.1, -1.1, 1.1)#0.5, 1.1, -0.5, 0.5)
         cb = Colorbar(fig[1,2], ms)
-        cb.ticks = (collect(-0.05:0.1:0.35), [L"10^{%$(k)}" for k in -0.05:0.1:0.35])
+        #cb.ticks = (collect(-0.05:0.1:0.35), [L"10^{%$(k)}" for k in -0.05:0.1:0.35])
     end
 
     begin

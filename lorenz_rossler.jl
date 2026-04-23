@@ -2,6 +2,7 @@ using LinearAlgebra, OrdinaryDiffEq, StaticArrays
 using Random, Statistics
 using ComplexRegions, RationalFunctionApproximation
 using GLMakie, DomainColoring
+using GLMakie.Makie: pseudolog10
 using ProgressMeter, Serialization
 using #= MATLAB, =# DelimitedFiles
 using Base.Iterators
@@ -11,7 +12,7 @@ using Metal
 
 rng = Random.seed!(1234)
 
-#=
+
 # Rössler vectorfield
 function rhs(u, p, t)
     x, y, z, = u
@@ -32,7 +33,7 @@ function jac(u, p, t)
         z,   0,  x-c
     )
 end
-=#
+#= 
 # Lorenz vectorfield 
 function rhs(u, p, t)
     x, y, z = u
@@ -53,23 +54,23 @@ function jac(u, p, t)
         y     x  -β
     ]
 end
-
+=#
 # vectorfield parameters we will search
-n_iterations = 200
+n_iterations = 20
 convex_param = range(0, 1, n_iterations)
-#=
+
 p_iterator = Float32[
-    0.05 .* convex_param .+  0.25#=0.33=# .* (1 .- convex_param);; 
+    #= 0.05 =#0.27 .* convex_param .+  0.3#= 3 =# .* (1 .- convex_param);; 
     0.4 * ones(n_iterations);;# 1.82 .* convex_param  .+  0.2 .* (1 .- convex_param);; 
     8.5 * ones(n_iterations);;# 9.75 .* convex_param  .+  5.7 .* (1 .- convex_param);; 
 ]
-=#
+#= 
 p_iterator = Float32[
     23.5 .* convex_param .+ 24.5 .* (1 .- convex_param);;
     10 .* ones(n_iterations);; 
     8/3 .* ones(n_iterations);;
 ]
-
+=#
 # observable 
 g(x, σ=0f0) = x[1] - x[2] + 0.8f0x[3] - σ #exp(-norm(x)^2 / σ)#*sin(sum(x))  # something spicy
 gσ(σ) = x -> g(x, σ)
@@ -77,17 +78,17 @@ gσ(σ) = x -> g(x, σ)
 
 # how many trajectories per parameter
 n_trajectories = 30
-plot_trajectories = false
+plot_trajectories = true
 #u0s = Ref(Diagonal(SA_F32[4, 4, 0.8])) .* rand(SVector{3,Float32}, n_trajectories) .- Ref(SA_F32[2, 2, 0.4])    # random initial conditions
 
 
 # integration time 
-N = 600         # number of delays
+N = 200         # number of delays
 M = 2_000_000   # number of time steps
 
 dt = 0.02f0     # time step
-delay = 3dt
-offset = Int32(delay ÷ dt)
+offset = 60#Int32(delay ÷ dt)
+delay = offset*dt
 tspan = (0, M*dt + (N+1)*delay)
 integration_time = 0:dt:M*dt
 dz = 1f0/length(integration_time)/n_trajectories  # multiplier for integral
@@ -108,8 +109,10 @@ function inner_product_kernel(g, traj, corr, M, offset, dz)
     return nothing
 end
 
+second_order_kernel(x) = (1 + cos(π*x)) / 2
 fourth_order_kernel(x) = 1 - x^4 * (-20abs(x)^3 + 70x^2 - 84abs(x) + 35)
-Nkernel = round(Int, 3N/2)
+N_smoothing = N
+residue_tolerance = 1e-5
 
 #iteration = 40
 # computation starts here 
@@ -172,7 +175,7 @@ for iteration in 1:n_iterations
     sol_sample = fetch(finished_trajectories)
     avg = mean(g, sol_sample.u)   
     g_zero_mean = gσ(avg)
-    plot_trajectories  &&  lines!(ax3, plot_sol.u, color=:blue)
+    plot_trajectories  &&  lines!(ax3, sol_sample.u, color=:blue)
 
 
     # compute each autocorrelation on a GPU thread
@@ -192,18 +195,19 @@ for iteration in 1:n_iterations
     copyto!(autocorrelation, autocorrelation_gpu)   # move autocorrelation data to CPU
 
 
-    # smoothing
-    #autocorrelation .*= fourth_order_kernel.((0:N-1) ./ N)
-
-    #zpts = exp.(im .* range(0, 2π, length=10_000))
-    #meas(z) = autocorrelation' * z .^ (0:-1:-(N-1))
-    #meas_pts = meas.(zpts)
-    #four_meas = fft(meas_pts) / 10_000
-    #meas_view = FFTView(four_meas)
-
     gnorm = autocorrelation[1]
     autocorrelation ./= gnorm
 
+    # smoothing
+    autocorrelation .*= second_order_kernel.((0:N-1) ./ N_smoothing)
+
+    zpts = exp.(im .* range(0, 2π, length=10_000))
+    meas(z) = autocorrelation' * z .^ (0:-1:-(N-1))
+    meas_pts = meas.(zpts)
+    #four_meas = fft(meas_pts) / 10_000
+    #meas_view = FFTView(four_meas)
+
+#= 
     N_symmetric = N ÷ 2 - 1
 
     G = [
@@ -249,18 +253,28 @@ for iteration in 1:n_iterations
 
     moments = exp.(-im .* (-N:N) .* angle.(λ)') * abs2.(V' * G[:,N_symmetric+2])# * g_coeffs)
     moments .*= fourth_order_kernel.( (-N:N) ./ N )
-    
+     =#
 
     # send autocorrelation data to REfit in matlab
-    #writedlm("autocorrelation.txt", autocorrelation)
-    writedlm("autocorrelation_real.txt", real.(moments))
-    writedlm("autocorrelation_imag.txt", imag.(moments))
+    writedlm("autocorrelation.txt", autocorrelation)
+    #writedlm("autocorrelation_real.txt", real.(moments))
+    #writedlm("autocorrelation_imag.txt", imag.(moments))
 
     resonance_run = chomp(read(`/Applications/MATLAB_R2025b.app/bin/matlab -batch "resonance_runner"`, String))
     poles_r = vec(readdlm("poles.txt", ComplexF64))
-    poles_r[abs.(poles_r) .< 1e-20] .= 1e-20
     roots_r = vec(readdlm("roots.txt", ComplexF64))
-    roots_r[abs.(roots_r) .< 1e-20] .= 1e-20
+    residues_r = vec(readdlm("residues.txt", ComplexF64))
+
+    residues_r = residues_r[abs.(poles_r) .≤ 1]
+    poles_r = poles_r[abs.(poles_r) .≤ 1]
+    roots_r = roots_r[abs.(roots_r) .≤ 1]
+
+    perm = sortperm(residues_r, by=abs)
+    n_bad_poles = sum(abs.(residues_r) .< residue_tolerance)
+    n_bad_poles = min(n_bad_poles, length(poles_r)-1)   # give us at least one thing to plot
+
+    poles_r = poles_r[perm[n_bad_poles+1:end]]
+    residues_r = residues_r[perm[n_bad_poles+1:end]]
 
 
     # plot
@@ -271,8 +285,18 @@ for iteration in 1:n_iterations
             xlabel="Re(λ)", ylabel="Im(λ)"
         )
         lines!(ax, unitcircle, linewidth=1, color=:black)
-        scatter!(ax, poles_r, markersize=10, color=:transparent, strokecolor=:black, strokewidth=3, marker=:circle)
+        ms = scatter!(
+            ax, poles_r, 
+            markersize=10, 
+            color=abs.(residues_r), 
+            strokewidth=3, 
+            marker=:circle, 
+            #colorscale=pseudolog10, 
+            #colorrange=(-0.05, 0.351)
+        )
         limits!(ax, -1.1, 1.1, -1.1, 1.1)#0.5, 1.1, -0.5, 0.5)
+        cb = Colorbar(fig[1,2], ms)
+        #cb.ticks = (collect(-0.05:0.1:0.35), [L"10^{%$(k)}" for k in -0.05:0.1:0.35])
     end
 
     begin
@@ -294,13 +318,27 @@ for iteration in 1:n_iterations
             title=join(["$param = $val" for (param, val) in zip(("a", "b", "c"), round.(p, digits=2))], ", "), 
             xlabel="t", ylabel="⟨𝒦ᵗg, g⟩"
         )
-        #ms = plot!((0:N-1) .* delay, autocorrelation)
-        ms = plot!(-N:N, real.(moments))
+        ms = plot!((0:N-1) .* delay, autocorrelation)
+        #ms = plot!(-N:N, real.(moments))
+    end
+
+    begin
+        fig5 = Figure(size=(720,520))
+        ax5 = Axis(fig5[1,1],
+            title=join(["$param = $val" for (param, val) in zip(("a", "b", "c"), round.(p, digits=2))], ", "), 
+            xlabel="θ", ylabel="power spectral density", 
+            xticks=round.(-π:π/4:π, digits=3), 
+            yscale=pseudolog10
+        )
+        ms = plot!(angle.(zpts), real.(meas_pts), label="real")
+        ms = plot!(angle.(zpts), imag.(meas_pts), label="imaginary")
+        #ms = plot!(-N:N, real.(moments))
     end
 
     save("phaseplots/phaseplot_$iteration.png", fig)
     save("abs/abs_$iteration.png", fig2)
-    save("power_spectra/power_$iteration.png", fig4)
+    save("autocorrelations/auto_$iteration.png", fig4)
+    save("power_spectra/power_$iteration.png", fig5)
     
     if plot_trajectories
         save("trajectories/traj_$iteration.png", fig3)
